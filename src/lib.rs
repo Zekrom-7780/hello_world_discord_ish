@@ -3,6 +3,9 @@ use discord_flows::{
     ProvidedBot, Bot,
 };
 use flowsnet_platform_sdk::logger;
+use rust_bert::pipelines::question_answering::{QaInput, QuestionAnsweringModel};
+use rust_bert::bert::BertConfig;
+use tch::nn::VarStore;
 
 #[no_mangle]
 #[tokio::main(flavor = "current_thread")]
@@ -27,12 +30,44 @@ async fn handler(bot: &ProvidedBot, msg: Message) {
     }
 
     let channel_id = msg.channel_id;
-    let resp = format!("Welcome to flows.network.\nYou just said: '{}'.\nLearn more at: https://github.com/flows-network/hello-world\n", msg.content);
 
-    _ = discord.send_message(
-        channel_id.into(),
-        &serde_json::json!({
-            "content": resp
-        }),
-    ).await;
+    // Process user messages containing questions
+    if msg.content.starts_with("!ask") {
+        let question = msg.content.trim_start_matches("!ask").trim();
+        
+        if question.is_empty() {
+            return;
+        }
+
+        // Initialize the question answering model
+        let qa_model = load_qa_model();
+
+        // Use the question answering model to get an answer
+        let qa_input = QaInput {
+            question: question.to_string(),
+            context: "Provide your context here.".to_string(), // You may customize the context based on your use case
+            title: None,
+        };
+
+        let answer = qa_model.predict(&[qa_input]).pop().unwrap();
+        let answer_text = answer.answer;
+
+        let resp = format!(
+            "You asked: '{}'\nQuestion Answer: {}\n",
+            question,
+            answer_text
+        );
+
+        discord
+            .send_message(channel_id.into(), &serde_json::json!({ "content": resp }))
+            .await;
+    }
+}
+
+fn load_qa_model() -> QuestionAnsweringModel {
+    let config = BertConfig::from_pretrained("bert-base-uncased");
+    let vs = VarStore::new(tch::Device::Cpu);
+    let model = QuestionAnsweringModel::new(&vs.root(), &config);
+
+    model
 }
